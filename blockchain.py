@@ -304,33 +304,40 @@ def consensus_protocol(blocks, peers, tx_pool, block_time_in_min, miner_address,
                     if display:
                         st.success("✅ 마지막 블록이 일치하거나 내 블록이 초기화된 경우 입니다. 새로운 블록만 가져옵니다.")
                         
-                    new_blocks = list(peer_blocks.find({"index": {"$gt": my_last_index}}).sort("index"))  # 4                    
+                    new_blocks = list(peer_blocks.find({"index": {"$gt": my_last_index}}).sort("index"))  # 4   
+                    
                     for blk in new_blocks:
                         blk_time = datetime.fromtimestamp(blk["timestamp"])
-                        if (datetime.utcnow() + timedelta(hours=9)) - blk_time >= timedelta(minutes=block_time_in_min):
-                            valid = True
-                            system_tx_count = 0  # SYSTEM 트랜잭션 수 카운터
-
-                            for tx in blk["transactions"]:
-                                if tx["sender"] == "SYSTEM":
-                                    system_tx_count += 1
-                                    expected_reward = get_block_reward(blk["index"])
-                                    if tx["amount"] != expected_reward:
-                                        if display:
-                                            st.warning(f"❌ SYSTEM 보상 금액 불일치 (예상: {expected_reward}, 실제: {tx['amount']})")
-                                        valid = False
-                                        break
-                                else:
-                                    if not verify_signature(tx):
-                                        if display:
-                                            st.warning("❌ 서명 검증 실패")
-                                        valid = False
-                                        break
-                                    if get_balance(tx["sender"], blocks) < tx["amount"] + tx.get("fee", 0):
-                                        if display:
-                                            st.warning("❌ 잔고 부족")
-                                        valid = False
-                                        break
+                        prev_block = blocks.find_one({"index": blk["index"] - 1})
+                        if prev_block or blk["index"]==1: # Genesis block
+                            if blk["index"]==1:
+                                prev_time=datetime.fromtimestamp(0)
+                            else:
+                                prev_time = datetime.fromtimestamp(prev_block["timestamp"])
+                            if blk_time - prev_time >= timedelta(minutes=block_time_in_min):
+                                valid = True        
+                                system_tx_count = 0  # SYSTEM 트랜잭션 수 카운터
+                                for tx in blk["transactions"]:
+                                    if tx["sender"] == "SYSTEM":
+                                        system_tx_count += 1
+                                        total_fees = sum(tx.get("fee", 0) for tx in blk["transactions"] if tx["sender"] != "SYSTEM")
+                                        expected_reward = get_block_reward(blk["index"]) + total_fees
+                                        if tx["amount"] != expected_reward:
+                                            if display:
+                                                st.warning(f"❌ SYSTEM 보상 금액 불일치 (예상: {expected_reward}, 실제: {tx['amount']})")
+                                            valid = False
+                                            break
+                                    else:
+                                        if not verify_signature(tx):
+                                            if display:
+                                                st.warning("❌ 서명 검증 실패")
+                                            valid = False
+                                            break
+                                        if get_balance(tx["sender"], blocks) < tx["amount"] + tx.get("fee", 0):
+                                            if display:
+                                                st.warning("❌ 잔고 부족")
+                                            valid = False
+                                            break
 
                             if system_tx_count > 1:
                                 if display:
@@ -377,7 +384,8 @@ def consensus_protocol(blocks, peers, tx_pool, block_time_in_min, miner_address,
                     
                     if not tx_exists_in_chain and not tx_exists_in_pool:
                         if tx["sender"] == "SYSTEM":
-                            expected_reward = get_block_reward(blk["index"])
+                            total_fees = sum(tx.get("fee", 0) for tx in blk["transactions"] if tx["sender"] != "SYSTEM")
+                            expected_reward = get_block_reward(blk["index"]) + total_fees
                             if tx["amount"] == expected_reward:
                                 tx_pool.insert_one(tx)
                                 if display:
